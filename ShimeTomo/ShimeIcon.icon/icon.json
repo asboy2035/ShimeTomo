@@ -1,0 +1,51 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.00000,0.78431,0.70196,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "extended-gray:1.00000,1.00000"
+          },
+          "image-name" : "fluent--animal-paw-print-24-filled.svg",
+          "name" : "fluent--animal-paw-print-24-filled",
+          "position" : {
+            "scale" : 16,
+            "translation-in-points" : [
+              0,
+              54.984375
+            ]
+          }
+        },
+        {
+          "image-name" : "macwindow.svg",
+          "name" : "macwindow",
+          "opacity" : 0.6,
+          "position" : {
+            "scale" : 2.5,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

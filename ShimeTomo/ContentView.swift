@@ -96,9 +96,12 @@ struct ContentView: View {
                 } label: {
                     Label("Import Folder", systemImage: "folder.badge.plus")
                 }
+                .buttonStyle(BorderedProminentButtonStyle())
+                .tint(Color.accent)
             }
         }
         .frame(minWidth: 750, minHeight: 500)
+        .navigationTitle("しめとも")
         .sheet(isPresented: $showingActive) {
             VStack {
                 HStack() {
@@ -161,6 +164,7 @@ struct ContentView: View {
                             .padding(.vertical, 4)
                     }
                     .buttonStyle(BorderedProminentButtonStyle())
+                    .tint(Color.accent)
                     .clipShape(.capsule)
                 }
             }
