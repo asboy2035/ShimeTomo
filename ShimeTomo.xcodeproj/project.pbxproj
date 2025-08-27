@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXFileReference section */
+		17A765D16FE136476AA354BE /* LICENSE.txt */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text; path = LICENSE.txt; sourceTree = "<group>"; };
+		17A76EC9E8E346BAEC41C265 /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		5EE730AF2E5F3F3100611637 /* ShimeTomo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ShimeTomo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -34,6 +36,8 @@
 			children = (
 				5EE730B12E5F3F3100611637 /* ShimeTomo */,
 				5EE730B02E5F3F3100611637 /* Products */,
+				17A765D16FE136476AA354BE /* LICENSE.txt */,
+				17A76EC9E8E346BAEC41C265 /* README.md */,
 			);
 			sourceTree = "<group>";
 		};
