@@ -129,10 +129,11 @@ class ShimejiManager: ObservableObject {
             floatingShimejis.remove(at: index)
         }
         
-        // Clean up on next run loop to avoid timing issues
-        DispatchQueue.main.async {
-            floating.prepareForClose()
-        }
+        // Break the manager reference immediately
+        floating.manager = nil
+        
+        // Clean up immediately on main queue
+        floating.prepareForClose()
     }
     
     private func saveShimejis() {
@@ -238,16 +239,22 @@ class FloatingShimeji: ObservableObject, Identifiable {
         self.imageView = imgView
         
         // Close Button
-        let closeBtn = NSButton(title: "✖️", target: self, action: #selector(closeButtonPressed))
+        let closeBtn = NSButton(title: "✖️", target: nil, action: nil)
         closeBtn.isBordered = false
         closeBtn.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
         closeBtn.wantsLayer = true
         closeBtn.layer?.backgroundColor = NSColor.clear.cgColor
+        // Set target and action after creation to avoid retain cycles
+        closeBtn.target = self
+        closeBtn.action = #selector(closeButtonPressed)
         self.closeButton = closeBtn
         
         // Scale Slider
-        let scaleSlider = NSSlider(value: Double(scale), minValue: 0.2, maxValue: 3.0, target: self, action: #selector(scaleChanged))
+        let scaleSlider = NSSlider(value: Double(scale), minValue: 0.2, maxValue: 3.0, target: nil, action: nil)
         scaleSlider.frame = NSRect(x: 10, y: 10, width: scaledSize - 20, height: 20)
+        // Set target and action after creation to avoid retain cycles
+        scaleSlider.target = self
+        scaleSlider.action = #selector(scaleChanged)
         self.slider = scaleSlider
         
         // Container View
@@ -291,6 +298,9 @@ class FloatingShimeji: ObservableObject, Identifiable {
         guard !isClosing else { return }
         isClosing = true
         
+        // Break manager reference first
+        manager = nil
+        
         // Stop all timers immediately
         timer?.invalidate()
         timer = nil
@@ -300,12 +310,25 @@ class FloatingShimeji: ObservableObject, Identifiable {
         // Prepare container for close
         containerView?.prepareForClose()
         
+        // Remove gesture recognizers
+        containerView?.gestureRecognizers.forEach { gestureRecognizer in
+            containerView?.removeGestureRecognizer(gestureRecognizer)
+        }
+        
+        // Clear targets to break retain cycles
+        closeButton?.target = nil
+        closeButton?.action = nil
+        slider?.target = nil
+        slider?.action = nil
+        
         // Close window
         window?.orderOut(nil)
-        window?.close()
         
-        // Clear references
-        cleanup()
+        // Delay window close slightly to ensure UI updates complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.window?.close()
+            self?.cleanup()
+        }
     }
     
     private func cleanup() {
@@ -314,11 +337,18 @@ class FloatingShimeji: ObservableObject, Identifiable {
         movementTimer?.invalidate()
         movementTimer = nil
         
+        // Clear all UI references
+        imageView?.removeFromSuperview()
+        closeButton?.removeFromSuperview()
+        slider?.removeFromSuperview()
+        containerView?.removeFromSuperview()
+        
         imageView = nil
         closeButton = nil
         slider = nil
         containerView = nil
         window = nil
+        manager = nil
     }
     
     func showControls() {
