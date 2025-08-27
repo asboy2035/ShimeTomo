@@ -110,41 +110,41 @@ class FloatingShimeji: ObservableObject, Identifiable {
         makeDraggable()
     }
     
-    func prepareForClose() {
+    func prepareForClose(completion: (() -> Void)? = nil) {
         guard !isClosing else { return }
         isClosing = true
-        
-        // Break manager reference first
-        manager = nil
-        
+
         // Stop all timers immediately
         timer?.invalidate()
         timer = nil
         movementTimer?.invalidate()
         movementTimer = nil
-        
+
         // Prepare container for close
         containerView?.prepareForClose()
-        
+
         // Remove gesture recognizers
-        containerView?.gestureRecognizers.forEach { gestureRecognizer in
-            containerView?.removeGestureRecognizer(gestureRecognizer)
+        if let containerView = containerView {
+            containerView.gestureRecognizers.forEach { gestureRecognizer in
+                containerView.removeGestureRecognizer(gestureRecognizer)
+            }
         }
-        
+
         // Clear targets to break retain cycles
         closeButton?.target = nil
         closeButton?.action = nil
         slider?.target = nil
         slider?.action = nil
-        
-        // Close window
-        window?.orderOut(nil)
-        
-        // Delay window close slightly to ensure UI updates complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.window?.close()
-            self?.cleanup()
-        }
+
+        // Animate window out
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.1
+            self.window?.animator().alphaValue = 0
+        }, completionHandler: {
+            self.window?.orderOut(nil)
+            self.cleanup()
+            completion?()
+        })
     }
     
     private func cleanup() {

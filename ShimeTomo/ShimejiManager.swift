@@ -89,16 +89,13 @@ class ShimejiManager: ObservableObject {
     }
     
     func closeFloating(_ floating: FloatingShimeji) {
-        // Remove from array first to prevent UI updates during cleanup
-        if let index = floatingShimejis.firstIndex(where: { $0.id == floating.id }) {
-            floatingShimejis.remove(at: index)
+        floating.prepareForClose { [weak self] in
+            DispatchQueue.main.async {
+                if let index = self?.floatingShimejis.firstIndex(where: { $0.id == floating.id }) {
+                    self?.floatingShimejis.remove(at: index)
+                }
+            }
         }
-        
-        // Break the manager reference immediately
-        floating.manager = nil
-        
-        // Clean up immediately on main queue
-        floating.prepareForClose()
     }
     
     func rename(shimeji: Shimeji, to newName: String) {
