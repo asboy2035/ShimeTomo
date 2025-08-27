@@ -213,12 +213,19 @@ class FloatingShimeji: ObservableObject, Identifiable {
     private var movementTimer: Timer?
     private var isClosing = false
     
+    // DVD-style movement properties
+    private var velocityX: CGFloat = 1.0
+    private var velocityY: CGFloat = 0.5
+    
     weak var manager: ShimejiManager?
     
     @Published var scale: CGFloat = 1.0
     
     init(shimeji: Shimeji) {
         self.shimeji = shimeji
+        // Randomize initial velocity direction and speed for variety!
+        self.velocityX = CGFloat.random(in: 1.0...3.0) * (Bool.random() ? 1 : -1)
+        self.velocityY = CGFloat.random(in: 1.0...3.0) * (Bool.random() ? 1 : -1)
     }
     
     deinit {
@@ -371,7 +378,7 @@ class FloatingShimeji: ObservableObject, Identifiable {
         guard !isClosing else { return }
         
         var index = 0
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] timer in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
             guard let self = self, !self.isClosing else {
                 timer.invalidate()
                 return
@@ -390,25 +397,35 @@ class FloatingShimeji: ObservableObject, Identifiable {
     private func startMovement() {
         guard !isClosing else { return }
         
-        movementTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+        movementTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak self] timer in // ~60fps for smooth movement
             guard let self = self, !self.isClosing, let window = self.window else {
                 timer.invalidate()
                 return
             }
             
-            // Pick a small random direction
-            let dx = CGFloat.random(in: -1...1)
-            let dy = CGFloat.random(in: -1...1)
-            
-            // Update frame
+            // Get current position
             var frame = window.frame
-            frame.origin.x += dx
-            frame.origin.y += dy
             
-            // Keep within screen bounds
-            if let screenFrame = window.screen?.visibleFrame {
-                frame.origin.x = min(max(frame.origin.x, screenFrame.minX), screenFrame.maxX - frame.size.width)
-                frame.origin.y = min(max(frame.origin.y, screenFrame.minY), screenFrame.maxY - frame.size.height)
+            // Apply velocity
+            frame.origin.x += self.velocityX
+            frame.origin.y += self.velocityY
+            
+            // Get screen bounds
+            guard let screenFrame = window.screen?.visibleFrame else { return }
+            
+            // Bounce off edges! 🏓
+            // Left or right edge
+            if frame.origin.x <= screenFrame.minX || frame.origin.x + frame.size.width >= screenFrame.maxX {
+                self.velocityX = -self.velocityX
+                // Clamp position to stay in bounds
+                frame.origin.x = max(screenFrame.minX, min(frame.origin.x, screenFrame.maxX - frame.size.width))
+            }
+            
+            // Top or bottom edge
+            if frame.origin.y <= screenFrame.minY || frame.origin.y + frame.size.height >= screenFrame.maxY {
+                self.velocityY = -self.velocityY
+                // Clamp position to stay in bounds
+                frame.origin.y = max(screenFrame.minY, min(frame.origin.y, screenFrame.maxY - frame.size.height))
             }
             
             window.setFrame(frame, display: true)
