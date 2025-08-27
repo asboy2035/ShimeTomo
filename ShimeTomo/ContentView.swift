@@ -118,13 +118,15 @@ class ShimejiManager: ObservableObject {
     
     func showFloating(shimeji: Shimeji) {
         let floating = FloatingShimeji(shimeji: shimeji)
+        floating.manager = self
         floatingShimejis.append(floating)
         floating.show()
     }
     
     func closeFloating(_ floating: FloatingShimeji) {
-        floating.close()
-        floatingShimejis.removeAll { $0.id == floating.id }
+        floating.prepareForClose()  // invalidate timers & remove tracking areas
+        floating.close()            // close window
+        floatingShimejis.removeAll { $0.id == floating.id } // remove reference last
     }
     
     private func saveShimejis() {
@@ -154,24 +156,44 @@ class ShimejiManager: ObservableObject {
     }
 }
 
+// MARK: - Floating Container View
+class FloatingContainerView: NSView {
+    weak var floatingShimeji: FloatingShimeji?
+    
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { self.removeTrackingArea($0) }
+        let trackingArea = NSTrackingArea(rect: self.bounds,
+                                          options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                          owner: self,
+                                          userInfo: nil)
+        self.addTrackingArea(trackingArea)
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        floatingShimeji?.showControls()
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        floatingShimeji?.hideControls()
+    }
+}
+
 // MARK: - Floating Shimeji
 class FloatingShimeji: ObservableObject, Identifiable {
     let id = UUID()
     let shimeji: Shimeji
     var window: NSWindow!
     var imageView: NSImageView!
-    var containerView: NSView!
+    var containerView: FloatingContainerView!
     var closeButton: NSButton!
     var slider: NSSlider!
     var timer: Timer?
     var movementTimer: Timer?
     
+    weak var manager: ShimejiManager?
+    
     @Published var scale: CGFloat = 1.0
-    private var isHovering = false {
-        didSet {
-            updateControlsVisibility()
-        }
-    }
     
     init(shimeji: Shimeji) {
         self.shimeji = shimeji
@@ -187,7 +209,7 @@ class FloatingShimeji: ObservableObject, Identifiable {
         imageView.image = shimeji.preview
         
         // Close Button
-        closeButton = NSButton(title: "✖️", target: self, action: #selector(close))
+        closeButton = NSButton(title: "✖️", target: self, action: #selector(closeButtonPressed))
         closeButton.isBordered = false
         closeButton.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
         closeButton.wantsLayer = true
@@ -199,23 +221,17 @@ class FloatingShimeji: ObservableObject, Identifiable {
         
         // Container View
         let containerHeight = scaledSize + 50
-        containerView = NSView(frame: NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight))
+        containerView = FloatingContainerView(frame: NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight))
         containerView.wantsLayer = true
         containerView.layer?.backgroundColor = NSColor.clear.cgColor
         containerView.addSubview(imageView)
         containerView.addSubview(closeButton)
         containerView.addSubview(slider)
+        containerView.floatingShimeji = self
         
         // Initially hide controls
         closeButton.isHidden = true
         slider.isHidden = true
-        
-        // Add tracking area for hover detection
-        let trackingArea = NSTrackingArea(rect: containerView.bounds,
-                                          options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                          owner: self,
-                                          userInfo: nil)
-        containerView.addTrackingArea(trackingArea)
         
         // Window
         window = NSWindow(
@@ -238,24 +254,30 @@ class FloatingShimeji: ObservableObject, Identifiable {
         makeDraggable()
     }
     
-    private func updateControlsVisibility() {
+    func prepareForClose() {
+        timer?.invalidate()
+        movementTimer?.invalidate()
+        containerView?.removeFromSuperview()
+        window?.orderOut(nil)
+    }
+    
+    func showControls() {
         DispatchQueue.main.async {
-            self.closeButton.isHidden = !self.isHovering
-            self.slider.isHidden = !self.isHovering
+            self.closeButton.isHidden = false
+            self.slider.isHidden = false
         }
     }
     
-    @objc func mouseEntered(with event: NSEvent) {
-        isHovering = true
-    }
-    
-    @objc func mouseExited(with event: NSEvent) {
-        isHovering = false
+    func hideControls() {
+        DispatchQueue.main.async {
+            self.closeButton.isHidden = true
+            self.slider.isHidden = true
+        }
     }
     
     private func startAnimation() {
         var index = 0
-        timer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             if self.shimeji.images.isEmpty { return }
             let imageName = self.shimeji.images[index % self.shimeji.images.count].name
@@ -305,10 +327,14 @@ class FloatingShimeji: ObservableObject, Identifiable {
         gesture.setTranslation(.zero, in: gesture.view)
     }
     
-    @objc func close() {
+    func close() {
         timer?.invalidate()
         movementTimer?.invalidate()
         window.close()
+    }
+    
+    @objc func closeButtonPressed() {
+        manager?.closeFloating(self)
     }
     
     @objc private func scaleChanged(slider: NSSlider) {
