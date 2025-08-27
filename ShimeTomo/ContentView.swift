@@ -124,9 +124,15 @@ class ShimejiManager: ObservableObject {
     }
     
     func closeFloating(_ floating: FloatingShimeji) {
-        floating.prepareForClose()  // invalidate timers & remove tracking areas
-        floating.close()            // close window
-        floatingShimejis.removeAll { $0.id == floating.id } // remove reference last
+        // Remove from array first to prevent UI updates during cleanup
+        if let index = floatingShimejis.firstIndex(where: { $0.id == floating.id }) {
+            floatingShimejis.remove(at: index)
+        }
+        
+        // Clean up on next run loop to avoid timing issues
+        DispatchQueue.main.async {
+            floating.prepareForClose()
+        }
     }
     
     private func saveShimejis() {
@@ -159,10 +165,16 @@ class ShimejiManager: ObservableObject {
 // MARK: - Floating Container View
 class FloatingContainerView: NSView {
     weak var floatingShimeji: FloatingShimeji?
+    private var isClosing = false
     
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        // Clear existing tracking areas to prevent accumulation
         trackingAreas.forEach { self.removeTrackingArea($0) }
+        
+        // Only add tracking if not closing
+        guard !isClosing else { return }
+        
         let trackingArea = NSTrackingArea(rect: self.bounds,
                                           options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                           owner: self,
@@ -171,11 +183,19 @@ class FloatingContainerView: NSView {
     }
     
     override func mouseEntered(with event: NSEvent) {
+        guard !isClosing else { return }
         floatingShimeji?.showControls()
     }
     
     override func mouseExited(with event: NSEvent) {
+        guard !isClosing else { return }
         floatingShimeji?.hideControls()
+    }
+    
+    func prepareForClose() {
+        isClosing = true
+        trackingAreas.forEach { self.removeTrackingArea($0) }
+        floatingShimeji = nil
     }
 }
 
@@ -183,13 +203,14 @@ class FloatingContainerView: NSView {
 class FloatingShimeji: ObservableObject, Identifiable {
     let id = UUID()
     let shimeji: Shimeji
-    var window: NSWindow!
-    var imageView: NSImageView!
-    var containerView: FloatingContainerView!
-    var closeButton: NSButton!
-    var slider: NSSlider!
-    var timer: Timer?
-    var movementTimer: Timer?
+    private var window: NSWindow?
+    private var imageView: NSImageView?
+    private var containerView: FloatingContainerView?
+    private var closeButton: NSButton?
+    private var slider: NSSlider?
+    private var timer: Timer?
+    private var movementTimer: Timer?
+    private var isClosing = false
     
     weak var manager: ShimejiManager?
     
@@ -199,138 +220,186 @@ class FloatingShimeji: ObservableObject, Identifiable {
         self.shimeji = shimeji
     }
     
+    deinit {
+        // Ensure cleanup happens
+        cleanup()
+    }
+    
     func show() {
+        guard !isClosing else { return }
+        
         let baseSize: CGFloat = 150
         let scaledSize = baseSize * scale
         
         // Image View
-        imageView = NSImageView(frame: NSRect(x: 0, y: 40, width: scaledSize, height: scaledSize))
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.image = shimeji.preview
+        let imgView = NSImageView(frame: NSRect(x: 0, y: 40, width: scaledSize, height: scaledSize))
+        imgView.imageScaling = .scaleProportionallyUpOrDown
+        imgView.image = shimeji.preview
+        self.imageView = imgView
         
         // Close Button
-        closeButton = NSButton(title: "✖️", target: self, action: #selector(closeButtonPressed))
-        closeButton.isBordered = false
-        closeButton.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
-        closeButton.wantsLayer = true
-        closeButton.layer?.backgroundColor = NSColor.clear.cgColor
+        let closeBtn = NSButton(title: "✖️", target: self, action: #selector(closeButtonPressed))
+        closeBtn.isBordered = false
+        closeBtn.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
+        closeBtn.wantsLayer = true
+        closeBtn.layer?.backgroundColor = NSColor.clear.cgColor
+        self.closeButton = closeBtn
         
         // Scale Slider
-        slider = NSSlider(value: Double(scale), minValue: 0.2, maxValue: 3.0, target: self, action: #selector(scaleChanged))
-        slider.frame = NSRect(x: 10, y: 10, width: scaledSize - 20, height: 20)
+        let scaleSlider = NSSlider(value: Double(scale), minValue: 0.2, maxValue: 3.0, target: self, action: #selector(scaleChanged))
+        scaleSlider.frame = NSRect(x: 10, y: 10, width: scaledSize - 20, height: 20)
+        self.slider = scaleSlider
         
         // Container View
         let containerHeight = scaledSize + 50
-        containerView = FloatingContainerView(frame: NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight))
-        containerView.wantsLayer = true
-        containerView.layer?.backgroundColor = NSColor.clear.cgColor
-        containerView.addSubview(imageView)
-        containerView.addSubview(closeButton)
-        containerView.addSubview(slider)
-        containerView.floatingShimeji = self
+        let container = FloatingContainerView(frame: NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        container.addSubview(imgView)
+        container.addSubview(closeBtn)
+        container.addSubview(scaleSlider)
+        container.floatingShimeji = self
+        self.containerView = container
         
         // Initially hide controls
-        closeButton.isHidden = true
-        slider.isHidden = true
+        closeBtn.isHidden = true
+        scaleSlider.isHidden = true
         
         // Window
-        window = NSWindow(
+        let win = NSWindow(
             contentRect: NSRect(x: 300, y: 300, width: scaledSize, height: containerHeight),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .floating
-        window.hasShadow = false
-        window.ignoresMouseEvents = false
-        window.contentView = containerView
-        window.makeKeyAndOrderFront(nil)
+        win.isOpaque = false
+        win.backgroundColor = .clear
+        win.level = .floating
+        win.hasShadow = false
+        win.ignoresMouseEvents = false
+        win.contentView = container
+        self.window = win
+        
+        win.makeKeyAndOrderFront(nil)
         
         startAnimation()
         startMovement()
-        
         makeDraggable()
     }
     
     func prepareForClose() {
+        guard !isClosing else { return }
+        isClosing = true
+        
+        // Stop all timers immediately
         timer?.invalidate()
+        timer = nil
         movementTimer?.invalidate()
-        containerView?.removeFromSuperview()
+        movementTimer = nil
+        
+        // Prepare container for close
+        containerView?.prepareForClose()
+        
+        // Close window
         window?.orderOut(nil)
+        window?.close()
+        
+        // Clear references
+        cleanup()
+    }
+    
+    private func cleanup() {
+        timer?.invalidate()
+        timer = nil
+        movementTimer?.invalidate()
+        movementTimer = nil
+        
+        imageView = nil
+        closeButton = nil
+        slider = nil
+        containerView = nil
+        window = nil
     }
     
     func showControls() {
-        DispatchQueue.main.async {
-            self.closeButton.isHidden = false
-            self.slider.isHidden = false
+        guard !isClosing else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.closeButton?.isHidden = false
+            self?.slider?.isHidden = false
         }
     }
     
     func hideControls() {
-        DispatchQueue.main.async {
-            self.closeButton.isHidden = true
-            self.slider.isHidden = true
+        guard !isClosing else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.closeButton?.isHidden = true
+            self?.slider?.isHidden = true
         }
     }
     
     private func startAnimation() {
+        guard !isClosing else { return }
+        
         var index = 0
-        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] timer in
+            guard let self = self, !self.isClosing else {
+                timer.invalidate()
+                return
+            }
+            
             if self.shimeji.images.isEmpty { return }
             let imageName = self.shimeji.images[index % self.shimeji.images.count].name
             let imageURL = self.shimeji.folderURL.appendingPathComponent(imageName)
             if let nsImage = NSImage(contentsOf: imageURL) {
-                self.imageView.image = nsImage
+                self.imageView?.image = nsImage
             }
             index += 1
         }
     }
     
     private func startMovement() {
-        movementTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+        guard !isClosing else { return }
+        
+        movementTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+            guard let self = self, !self.isClosing, let window = self.window else {
+                timer.invalidate()
+                return
+            }
             
             // Pick a small random direction
             let dx = CGFloat.random(in: -1...1)
             let dy = CGFloat.random(in: -1...1)
             
             // Update frame
-            var frame = self.window.frame
+            var frame = window.frame
             frame.origin.x += dx
             frame.origin.y += dy
             
             // Keep within screen bounds
-            if let screenFrame = self.window.screen?.visibleFrame {
+            if let screenFrame = window.screen?.visibleFrame {
                 frame.origin.x = min(max(frame.origin.x, screenFrame.minX), screenFrame.maxX - frame.size.width)
                 frame.origin.y = min(max(frame.origin.y, screenFrame.minY), screenFrame.maxY - frame.size.height)
             }
             
-            self.window.setFrame(frame, display: true)
+            window.setFrame(frame, display: true)
         }
     }
     
     private func makeDraggable() {
+        guard let container = containerView else { return }
         let pan = NSPanGestureRecognizer(target: self, action: #selector(handleDrag))
-        containerView.addGestureRecognizer(pan)
+        container.addGestureRecognizer(pan)
     }
     
     @objc private func handleDrag(gesture: NSPanGestureRecognizer) {
-        guard let window = gesture.view?.window else { return }
+        guard !isClosing, let window = gesture.view?.window else { return }
+        
         let translation = gesture.translation(in: gesture.view)
         var frame = window.frame
         frame.origin.x += translation.x
-        frame.origin.y += translation.y // use +=, not -=
+        frame.origin.y += translation.y
         window.setFrame(frame, display: true)
         gesture.setTranslation(.zero, in: gesture.view)
-    }
-    
-    func close() {
-        timer?.invalidate()
-        movementTimer?.invalidate()
-        window.close()
     }
     
     @objc func closeButtonPressed() {
@@ -338,6 +407,8 @@ class FloatingShimeji: ObservableObject, Identifiable {
     }
     
     @objc private func scaleChanged(slider: NSSlider) {
+        guard !isClosing, let window = self.window, let container = self.containerView else { return }
+        
         scale = CGFloat(slider.doubleValue)
         let baseSize: CGFloat = 150
         let scaledSize = baseSize * scale
@@ -348,15 +419,13 @@ class FloatingShimeji: ObservableObject, Identifiable {
         frame.size = NSSize(width: scaledSize, height: containerHeight)
         window.setFrame(frame, display: true)
         
-        containerView.frame = NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight)
+        container.frame = NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight)
         
         // Resize and reposition subviews
-        imageView.frame = NSRect(x: 0, y: 40, width: scaledSize, height: scaledSize)
-        
-        closeButton.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
-        
-        slider.frame = NSRect(x: 10, y: 10, width: scaledSize - 20, height: 20)
-        slider.doubleValue = Double(scale)
+        imageView?.frame = NSRect(x: 0, y: 40, width: scaledSize, height: scaledSize)
+        closeButton?.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
+        self.slider?.frame = NSRect(x: 10, y: 10, width: scaledSize - 20, height: 20)
+        self.slider?.doubleValue = Double(scale)
     }
 }
 
