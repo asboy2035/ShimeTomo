@@ -7,16 +7,86 @@
 
 internal import Combine
 import AppKit
+import SwiftUI
 
 
+// MARK: - SwiftUI Content View
+struct FloatingShimejiContentView: View {
+    let shimeji: Shimeji
+    @ObservedObject var floatingShimeji: FloatingShimeji
+    
+    private let baseSize: CGFloat = 150
+    
+    private var scaledSize: CGFloat {
+        baseSize * floatingShimeji.scale
+    }
+    
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                if let image = floatingShimeji.currentImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(height: scaledSize)
+                        .frame(width: scaledSize)
+                } else {
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(width: scaledSize, height: scaledSize)
+                }
+            }
+            
+            if floatingShimeji.isHovering {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            floatingShimeji.closeButtonPressed()
+                        }) {
+                            Image(systemName: "xmark")
+                                .foregroundStyle(.primary)
+                                .frame(width: 28, height: 28)
+                                .background(.ultraThinMaterial)
+                                .overlay(Circle().stroke(.tertiary.opacity(0.5), lineWidth: 1))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .transition(.opacity.combined(with: .scale))
+                    }
+                    Spacer()
+                    Slider(value: Binding(
+                        get: { floatingShimeji.scale },
+                        set: { newValue in
+                            floatingShimeji.updateScale(newValue)
+                        }
+                    ), in: 0.2...3.0)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+                .padding()
+                .animation(.easeInOut(duration: 0.2), value: floatingShimeji.isHovering)
+                .animation(.easeInOut(duration: 0.2), value: floatingShimeji.scale)
+            }
+        }
+        .background(
+            VisualEffectView(
+                material: .fullScreenUI,
+                blendingMode: .behindWindow
+            )
+            .opacity(floatingShimeji.isHovering ? 1 : 0)
+        )
+        .overlay(RoundedRectangle(cornerRadius: 22).stroke(.tertiary.opacity(0.5), lineWidth: floatingShimeji.isHovering ? 2 : 0))
+        .mask(RoundedRectangle(cornerRadius: 22))
+    }
+}
+
+// MARK: - FloatingShimeji Class
 class FloatingShimeji: ObservableObject, Identifiable {
     let id = UUID()
     let shimeji: Shimeji
     private var window: NSWindow?
-    private var imageView: NSImageView?
+    private var hostingView: NSHostingView<FloatingShimejiContentView>?
     private var containerView: FloatingContainerView?
-    private var closeButton: NSButton?
-    private var slider: NSSlider?
     private var timer: Timer?
     private var movementTimer: Timer?
     private var isClosing = false
@@ -25,6 +95,9 @@ class FloatingShimeji: ObservableObject, Identifiable {
     private var velocityX: CGFloat = 0.5
     private var velocityY: CGFloat = 0.25
     
+    // Current animation state
+    @Published var currentImage: NSImage?
+    
     weak var manager: ShimejiManager?
     
     @Published var scale: CGFloat = 1.0
@@ -32,6 +105,7 @@ class FloatingShimeji: ObservableObject, Identifiable {
     
     init(shimeji: Shimeji) {
         self.shimeji = shimeji
+        self.currentImage = shimeji.preview
         // Randomize initial velocity direction and speed for variety!
         self.velocityX = CGFloat.random(in: 1.0...3.0) * (Bool.random() ? 1 : -1)
         self.velocityY = CGFloat.random(in: 1.0...3.0) * (Bool.random() ? 1 : -1)
@@ -48,49 +122,28 @@ class FloatingShimeji: ObservableObject, Identifiable {
         let baseSize: CGFloat = 150
         let scaledSize = baseSize * scale
         
-        // Image View
-        let imgView = NSImageView(frame: NSRect(x: 0, y: 40, width: scaledSize, height: scaledSize))
-        imgView.imageScaling = .scaleProportionallyUpOrDown
-        imgView.image = shimeji.preview
-        self.imageView = imgView
+        // Create SwiftUI Content View with ObservedObject
+        let contentView = FloatingShimejiContentView(
+            shimeji: shimeji,
+            floatingShimeji: self
+        )
         
-        // Close Button
-        let closeBtn = NSButton(title: "×", target: nil, action: nil)
-        closeBtn.isBordered = false
-        closeBtn.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
-        closeBtn.wantsLayer = true
-        closeBtn.layer?.backgroundColor = NSColor.clear.cgColor
-        // Set target and action after creation to avoid retain cycles
-        closeBtn.target = self
-        closeBtn.action = #selector(closeButtonPressed)
-        self.closeButton = closeBtn
+        // Create NSHostingView to wrap SwiftUI content
+        let hosting = NSHostingView(rootView: contentView)
+        hosting.frame = NSRect(x: 0, y: 0, width: scaledSize + 35, height: scaledSize + 35)
+        self.hostingView = hosting
         
-        // Scale Slider
-        let scaleSlider = NSSlider(value: Double(scale), minValue: 0.2, maxValue: 3.0, target: nil, action: nil)
-        scaleSlider.frame = NSRect(x: 10, y: 10, width: scaledSize - 20, height: 20)
-        // Set target and action after creation to avoid retain cycles
-        scaleSlider.target = self
-        scaleSlider.action = #selector(scaleChanged)
-        self.slider = scaleSlider
-        
-        // Container View
-        let containerHeight = scaledSize + 50
-        let container = FloatingContainerView(frame: NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight))
+        // Container View for tracking mouse events
+        let container = FloatingContainerView(frame: NSRect(x: 0, y: 0, width: scaledSize, height: scaledSize + 35))
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
-        container.addSubview(imgView)
-        container.addSubview(closeBtn)
-        container.addSubview(scaleSlider)
+        container.addSubview(hosting)
         container.floatingShimeji = self
         self.containerView = container
         
-        // Initially hide controls
-        closeBtn.isHidden = true
-        scaleSlider.isHidden = true
-        
         // Window
         let win = NSWindow(
-            contentRect: NSRect(x: 300, y: 300, width: scaledSize, height: containerHeight),
+            contentRect: NSRect(x: 300, y: 300, width: scaledSize + 35, height: scaledSize + 35),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -130,12 +183,6 @@ class FloatingShimeji: ObservableObject, Identifiable {
             }
         }
 
-        // Clear targets to break retain cycles
-        closeButton?.target = nil
-        closeButton?.action = nil
-        slider?.target = nil
-        slider?.action = nil
-
         // Animate window out
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.1
@@ -154,14 +201,10 @@ class FloatingShimeji: ObservableObject, Identifiable {
         movementTimer = nil
         
         // Clear all UI references
-        imageView?.removeFromSuperview()
-        closeButton?.removeFromSuperview()
-        slider?.removeFromSuperview()
+        hostingView?.removeFromSuperview()
         containerView?.removeFromSuperview()
         
-        imageView = nil
-        closeButton = nil
-        slider = nil
+        hostingView = nil
         containerView = nil
         window = nil
         manager = nil
@@ -170,16 +213,14 @@ class FloatingShimeji: ObservableObject, Identifiable {
     func showControls() {
         guard !isClosing else { return }
         DispatchQueue.main.async { [weak self] in
-            self?.closeButton?.isHidden = false
-            self?.slider?.isHidden = false
+            self?.isHovering = true
         }
     }
     
     func hideControls() {
         guard !isClosing else { return }
         DispatchQueue.main.async { [weak self] in
-            self?.closeButton?.isHidden = true
-            self?.slider?.isHidden = true
+            self?.isHovering = false
         }
     }
     
@@ -197,7 +238,9 @@ class FloatingShimeji: ObservableObject, Identifiable {
             let imageName = self.shimeji.images[index % self.shimeji.images.count].name
             let imageURL = self.shimeji.folderURL.appendingPathComponent(imageName)
             if let nsImage = NSImage(contentsOf: imageURL) {
-                self.imageView?.image = nsImage
+                DispatchQueue.main.async {
+                    self.currentImage = nsImage
+                }
             }
             index += 1
         }
@@ -255,13 +298,13 @@ class FloatingShimeji: ObservableObject, Identifiable {
         manager?.closeFloating(self)
     }
     
-    @objc private func scaleChanged(slider: NSSlider) {
-        guard !isClosing, let window = self.window, let container = self.containerView else { return }
+    func updateScale(_ newScale: CGFloat) {
+        guard !isClosing, let window = self.window, let container = self.containerView, let hosting = self.hostingView else { return }
         
-        scale = CGFloat(slider.doubleValue)
+        scale = newScale
         let baseSize: CGFloat = 150
         let scaledSize = baseSize * scale
-        let containerHeight = scaledSize + 50
+        let containerHeight = scaledSize + (isHovering ? 50 : 0)
         
         // Resize window and container view
         var frame = window.frame
@@ -269,11 +312,7 @@ class FloatingShimeji: ObservableObject, Identifiable {
         window.setFrame(frame, display: true)
         
         container.frame = NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight)
-        
-        // Resize and reposition subviews
-        imageView?.frame = NSRect(x: 0, y: 40, width: scaledSize, height: scaledSize)
-        closeButton?.frame = NSRect(x: scaledSize - 30, y: scaledSize + 10, width: 30, height: 30)
-        self.slider?.frame = NSRect(x: 10, y: 10, width: scaledSize - 20, height: 20)
-        self.slider?.doubleValue = Double(scale)
+        hosting.frame = NSRect(x: 0, y: 0, width: scaledSize, height: containerHeight)
     }
 }
+
